@@ -1,0 +1,354 @@
+---
+---
+---
+
+# Loading necessary libraries
+
+```{r}
+library(readr)
+library(dplyr)
+library(ggplot2)
+library(tidyr)
+library(corrplot)
+library(caret)
+library(e1071)
+library(readr)
+library(class)
+library(pROC)
+library(stats)
+```
+
+# Load the Data
+
+```{r}
+data <- read_csv("CaseStudy2-data.csv")
+```
+
+# Exploratory Data Analysis
+
+### Display structure and summary of the dataset
+
+```{r}
+glimpse(data)
+summary(data)
+```
+
+Categories as factors
+
+```{r}
+data <- subset(data, select = -Over18) #All over 18 so deleted because it is factor level of 1 and messes things up
+data$Attrition <- as.factor(data$Attrition)
+data$BusinessTravel <- as.factor(data$BusinessTravel)
+data$Department <- as.factor(data$Department)
+data$EducationField <- as.factor(data$EducationField)
+data$Gender <- as.factor(data$Gender)
+data$JobRole <- as.factor(data$JobRole)
+data$MaritalStatus <- as.factor(data$MaritalStatus)
+data$OverTime <- as.factor(data$OverTime)
+```
+
+Check for missing values
+
+```{r}
+sum(is.na(data))
+```
+
+### Visualizing categorical variables
+
+```{r}
+categorical_vars <- c("Attrition", "BusinessTravel", "Department", "Gender", "JobRole", "MaritalStatus", "OverTime")
+par(mfrow=c(length(categorical_vars), 1))
+for (var in categorical_vars) {
+  print(
+    ggplot(data, aes_string(x=var, fill = var )) +
+    geom_bar() + 
+    scale_fill_brewer(palette="Set3") +  
+    theme_minimal() +  # Use a minimalistic theme
+    labs(title=paste("Distribution of", var), x=var, y="Count") +
+    theme(axis.text.x = element_text(angle=45, hjust=1), legend.position = "none") 
+  )
+}
+```
+
+### Visualize More Relationships
+
+```{r}
+# Job Satisfaction vs. Job Role
+ggplot(data, aes(x=JobRole, y=JobSatisfaction)) +
+  geom_boxplot() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  labs(title="Job Satisfaction by Job Role", y="Job Satisfaction", x="Job Role")
+
+# Monthly Income vs. Job Role
+ggplot(data, aes(x=JobRole, y=MonthlyIncome)) +
+  geom_boxplot() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  labs(title="Monthly Income by Job Role", y="Monthly Income", x="Job Role")
+
+# Scatter plot for Job Satisfaction vs. Monthly Income
+ggplot(data, aes(x=MonthlyIncome, y=JobSatisfaction)) +
+  geom_point(aes(color=factor(JobSatisfaction)), alpha=0.6) +
+  labs(title="Job Satisfaction vs. Monthly Income",
+       x="Monthly Income",
+       y="Job Satisfaction",
+       color="Job Satisfaction") + theme_minimal() +
+  theme(legend.position = "none") 
+
+# Plot a clustered bar chart for Gender vs. Job Role
+ggplot(data, aes(x=JobRole, fill=Gender)) +
+  geom_bar(position="dodge") +  # Place the bars side by side
+  labs(title="Gender Distribution by Job Role",
+       x="Job Role",
+       y="Count") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1), legend.position="bottom")
+# Boxplot for Gender vs. Monthly Income
+ggplot(data, aes(x=Gender, y=MonthlyIncome, fill=Gender)) +
+  geom_boxplot() +
+  labs(title="Monthly Income by Gender",
+       x="Gender",
+       y="Monthly Income") +
+  theme_minimal() +
+  theme(legend.position="none") 
+```
+
+# Attrition
+
+### Correlation
+
+```{r}
+# Change factors to numeric
+data$Attrition <- as.numeric(data$Attrition)
+data$BusinessTravel <- as.numeric(data$BusinessTravel)
+data$Department <- as.numeric(data$Department)
+data$EducationField <- as.numeric(data$EducationField)
+data$Gender <- as.numeric(data$Gender)
+data$JobRole <- as.numeric(data$JobRole)
+data$MaritalStatus <- as.numeric(data$MaritalStatus)
+data$OverTime <- as.numeric(data$OverTime)
+
+#
+numeric_data <- data[sapply(data, is.numeric)]
+numeric_data <- numeric_data[, sapply(numeric_data, function(x) var(x, na.rm = TRUE) >= 0)]
+
+# Now calculate the correlations
+correlations <- cor(data)
+
+# Visualize the corrected correlation matrix using corrplot
+corrplot(correlations, method = "color", tl.cex = 0.5)
+```
+
+### Top Positive and Top Negative Attrition Correlations
+
+```{r}
+attrition_correlations <- correlations["Attrition",]
+# Sort and select the top and bottom correlations
+top_positive_correlations <- sort(attrition_correlations, decreasing = TRUE)[2:11]
+top_negative_correlations <- sort(attrition_correlations, decreasing = FALSE)[1:10]
+
+# Plotting the results
+ggplot(data.frame(Variable = names(top_positive_correlations), Correlation = top_positive_correlations),
+       aes(x = reorder(Variable, Correlation), y = Correlation, fill = Correlation)) +
+  geom_bar(stat = "identity") +
+  coord_flip() +
+  labs(title = "Top Positive Correlations with Attrition", x = "Variable", y = "Correlation") + theme_minimal()
+
+ggplot(data.frame(Variable = names(top_negative_correlations), Correlation = top_negative_correlations),
+       aes(x = reorder(Variable, Correlation), y = Correlation, fill = Correlation)) +
+  geom_bar(stat = "identity") +
+  coord_flip() +
+  labs(title = "Top Negative Correlations with Attrition", x = "Variable", y = "Correlation") +
+  theme_minimal()
+```
+
+## Model Building
+
+```{r}
+# Reload Data
+data <- read_csv("CaseStudy2-data.csv")
+
+data <- subset(data, select = -c(Over18, EmployeeCount, StandardHours)) #All standard so deleted because it is factor level of 1 and messes things up
+
+# Convert Categorical variables back to factor
+data$Attrition <- as.factor(data$Attrition)
+data$BusinessTravel <- as.factor(data$BusinessTravel)
+data$Department <- as.factor(data$Department)
+data$EducationField <- as.factor(data$EducationField)
+data$Gender <- as.factor(data$Gender)
+data$JobRole <- as.factor(data$JobRole)
+data$MaritalStatus <- as.factor(data$MaritalStatus)
+data$OverTime <- as.factor(data$OverTime)
+table(data$Attrition) # Count of No and Yes in Attrition
+
+
+data$Attrition <- ifelse(data$Attrition == "No", 0, 1) #No is 0 Yes is 1
+
+table(data$Attrition) # Check if right after changing to 0 and 1
+
+# set seed for reproducibility 
+set.seed(123)
+# index data to create test and train sets
+index <- createDataPartition(data$Attrition, p = 0.8, list = FALSE)
+train <- data[index,]
+test <- data[-index,]
+
+
+```
+
+### Model 1
+
+Tried random variables based on the top positive and negative correlations.
+
+```{r}
+model1 <- glm(Attrition ~ OverTime + MaritalStatus + JobRole + JobInvolvement + TotalWorkingYears + JobLevel + JobSatisfaction + YearsInCurrentRole + MonthlyIncome + Age + StockOptionLevel + YearsWithCurrManager , family = binomial(link = "logit"), data = train)
+
+predictions1 <- predict(model1, test, type="response")
+predicted_class1 <- ifelse(predictions1 > 0.3, 1, 0)
+confusionMatrix(factor(predicted_class1), factor(test$Attrition))
+```
+
+### Forward Backward and StepWise
+
+Used to find best variable combination
+
+```{r echo=FALSE}
+# Full model with all predictors
+full_model <- glm(Attrition ~ ., data = data, family = binomial)
+
+# Backward Elimination
+backward_model <- step(full_model, direction = "backward")
+
+# Forward Selection - starting from an intercept-only model
+null_model <- glm(Attrition ~ 1, data = data, family = binomial)
+forward_model <- step(null_model, direction = "forward", scope = list(lower = null_model, upper = full_model))
+
+# Both Forward and Backward (Stepwise) Selection
+stepwise_model <- step(null_model, direction = "both", scope = list(lower = null_model, upper = full_model))
+
+# Summary of the models
+summary(backward_model)
+summary(forward_model)
+summary(stepwise_model)
+
+```
+
+### Model 2
+
+Now use those variables for NB model
+
+```{r}
+# Remove identifier columns
+data <- data[, !names(data) %in% c("ID", "EmployeeNumber")]
+
+# Convert factors where appropriate
+factor_cols <- c("Attrition", "BusinessTravel", "Department", "EducationField", 
+                 "Gender", "JobRole", "MaritalStatus", "OverTime")
+data[factor_cols] <- lapply(data[factor_cols], factor)
+
+# Prepare the training and test datasets
+set.seed(42)
+index <- createDataPartition(data$Attrition, p = 0.8, list = FALSE)
+trainData <- data[index,]
+testData <- data[-index,]
+
+# Preprocess the data
+preproc <- preProcess(trainData[, -which(names(trainData) == "Attrition")], method = c("center", "scale"))
+trainData_processed <- predict(preproc, trainData)
+testData_processed <- predict(preproc, testData)
+
+# Add Attrition back after processing
+trainData_processed$Attrition <- trainData$Attrition
+testData_processed$Attrition <- testData$Attrition
+
+# Naive Bayes model
+nb_model <- naiveBayes( Attrition ~  OverTime + MaritalStatus + JobRole + DistanceFromHome + JobInvolvement + TotalWorkingYears + JobLevel + YearsInCurrentRole + Age + YearsWithCurrManager + YearsAtCompany+ JobSatisfaction +  YearsSinceLastPromotion +  TrainingTimesLastYear  + NumCompaniesWorked  + BusinessTravel + WorkLifeBalance + EnvironmentSatisfaction + RelationshipSatisfaction +  HourlyRate, data = trainData_processed )
+nb_predictions <- predict(nb_model, testData_processed)
+
+# Confusion matrix for Naive Bayes
+conf_matrix_nb <-
+  confusionMatrix(nb_predictions, testData_processed$Attrition)
+print(conf_matrix_nb)
+
+# Find Best Threshold 
+predicted_probabilities <- predict(nb_model, testData_processed, type = "raw")
+roc_curve <- roc(testData_processed$Attrition, predicted_probabilities[, "Yes"])
+
+# Plot ROC curve
+plot(roc_curve, main = "ROC Curve", col = "#1c61b6")
+
+# Coordinates of Optimal Thresehold 
+coords(roc_curve, "best", ret = c("threshold", "specificity", "sensitivity"))
+
+# Change to Optimal Thresehold
+final_predictions <- ifelse(predicted_probabilities[, "Yes"] > 0.53, "Yes", "No")
+
+# Evaluate the new confusion matrix with Thresehold changed
+# Ensure both are factors with same levels
+final_predictions_factor <- factor(final_predictions, levels = c("No", "Yes"))
+actual_data_factor <- factor(testData_processed$Attrition, levels = c("No", "Yes"))
+
+# Confusion Matrix
+new_conf_matrix <- confusionMatrix(final_predictions_factor, actual_data_factor)
+new_conf_matrix
+
+```
+
+## Competition Set
+
+```{r}
+# Read the new data
+new_data <- read_csv("CaseStudy2CompSet+No+Attrition.csv")
+
+# Perform predictions
+predictions <- predict(nb_model, newdata = new_data)
+
+# Output predictions to a CSV file
+output <- data.frame(ID = new_data$ID, Attrition_Prediction = predictions)
+output
+write.csv(output, "attrition_predictions.csv", row.names = FALSE)
+```
+
+# Monthly Income
+
+## Model
+
+```{r}
+data <- read_csv("CaseStudy2-data.csv")
+data <- subset(data, select = -c(Over18, EmployeeCount, StandardHours )) #All standard so deleted because it is factor level of 1 and messes things up
+
+# Split data into training and testing sets
+set.seed(123)
+trainIndex_income <- createDataPartition(data$MonthlyIncome, p = 0.8, list = FALSE)
+train_data_income <- data[trainIndex_income, ]
+test_data_income <- data[-trainIndex_income, ]
+
+# Train the linear regression model
+model_MI <- lm(MonthlyIncome ~ ., data = train_data_income)
+summary(model_MI)
+# Make predictions on the test data
+predictionsMI <- predict(model_MI, newdata = test_data_income)
+
+# Evaluate the model
+maeMI <- mean(abs(predictionsMI - test_data_income$MonthlyIncome))
+mseMI <- mean((predictionsMI - test_data_income$MonthlyIncome)^2)
+rmseMI <- sqrt(mseMI)
+rsquaredMI <- cor(predictionsMI, test_data_income$MonthlyIncome)^2
+
+rmseMI
+```
+
+## Prediction Income
+
+```{r}
+#Load MI prediction dataset
+MI_data <- read.csv("CaseStudy2CompSet+No+Salary.csv")
+
+# 3. Use the trained model to predict salaries for the new dataset
+predicted_salaries <- predict(model_MI, newdata = MI_data)
+
+# 4. Output the predictions to a CSV file
+outputMI <- data.frame(ID = MI_data$ID, MonthlyIncome = predicted_salaries)
+outputMI
+write.csv(output, file = "predicted_salaries.csv", row.names = FALSE)
+
+```
