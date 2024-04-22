@@ -11,3 +11,6 @@ Our data science team conducted an extensive analysis of employee data, examinin
 
 ### Shiny Website:
 https://torih1541.shinyapps.io/Project2/
+
+### Video Presentation:
+https://youtu.be/YU_xbrv-SN0
